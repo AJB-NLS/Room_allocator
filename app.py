@@ -4,14 +4,14 @@ import pandas as pd
 import streamlit as st
 from allocator import (
     NAME_COL, GENDER_COL, CHOICE_COL,
-    parse_choices, evaluate_status, seed_rooms_by_links,
+    parse_choices, evaluate_status, strict_allocation, fallback_allocation,
     build_display_table, assign_names_by_capacity, split_capacities_auto
 )
 
 st.set_page_config(page_title="Room Allocator", layout="wide")
 
 st.title("Residential Trip Room Allocator")
-st.caption("Upload pupils + rooms, then click Allocate. Everyone gets at least one chosen friend; mutuals maximised.")
+st.caption("Upload pupils + rooms, then click Allocate. Tries strict rules first; falls back with a warning if not possible.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -34,17 +34,9 @@ if run:
         st.error("Please upload both pupils Excel and rooms CSV.")
         st.stop()
 
-    try:
-        pupils_df = pd.read_excel(pupils_file, sheet_name=sheet)
-    except Exception as e:
-        st.error(f"Could not read the pupils Excel: {e}")
-        st.stop()
-    try:
-        rooms_df = pd.read_csv(rooms_file, header=None)
-        all_rooms = [(str(r[0]).strip(), int(r[1])) for _, r in rooms_df.iterrows()]
-    except Exception as e:
-        st.error(f"Could not read the rooms CSV: {e}")
-        st.stop()
+    pupils_df = pd.read_excel(pupils_file, sheet_name=sheet)
+    rooms_df = pd.read_csv(rooms_file, header=None)
+    all_rooms = [(str(r[0]).strip(), int(r[1])) for _, r in rooms_df.iterrows()]
 
     boys_df = pupils_df[pupils_df[GENDER_COL] == "M"].copy()
     girls_df = pupils_df[pupils_df[GENDER_COL] == "F"].copy()
@@ -60,17 +52,27 @@ if run:
         boys_caps = [int(x.strip()) for x in boys_manual.split(",") if x.strip()]
         girls_caps = [int(x.strip()) for x in girls_manual.split(",") if x.strip()]
 
-    boys_rooms = seed_rooms_by_links(boys_choices, boys_caps)
-    girls_rooms = seed_rooms_by_links(girls_choices, girls_caps)
+    # Try strict boys/girls allocation
+    boys_rooms, boys_eval = strict_allocation(boys_choices, boys_caps)
+    girls_rooms, girls_eval = strict_allocation(girls_choices, girls_caps)
+
+    warning = False
+    if boys_rooms is None:
+        boys_rooms, boys_eval = fallback_allocation(boys_choices, boys_caps)
+        warning = True
+    if girls_rooms is None:
+        girls_rooms, girls_eval = fallback_allocation(girls_choices, girls_caps)
+        warning = True
 
     named_rooms = assign_names_by_capacity(all_rooms, boys_rooms, girls_rooms)
     display_df = build_display_table(named_rooms)
 
+    if warning:
+        st.warning("⚠️ It was not possible to satisfy every pupil’s choices. Below is the closest match, minimising pupils without a friend.")
+
     st.subheader("Final Allocation")
     st.dataframe(display_df, use_container_width=True)
 
-    boys_eval = evaluate_status(boys_choices, boys_rooms)
-    girls_eval = evaluate_status(girls_choices, girls_rooms)
     c1, c2 = st.columns(2)
     with c1:
         st.metric("Boys — Mutual", int((boys_eval["status"]=="MUTUAL_OK").sum()))

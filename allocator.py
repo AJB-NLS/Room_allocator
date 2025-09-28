@@ -1,6 +1,7 @@
 
 import pandas as pd
 from collections import defaultdict
+import copy
 
 NAME_COL = "Select your name. MAKE SURE YOU CLICK YOU!"
 GENDER_COL = "Gender"
@@ -83,6 +84,48 @@ def seed_rooms_by_links(choices, capacities):
                 unplaced.remove(p)
                 break
     return rooms
+
+def optimise_rooms(choices, rooms, max_iters=500):
+    """Try to reduce NO_MATCH by moving pupils to rooms with chosen friends."""
+    for _ in range(max_iters):
+        eval_df = evaluate_status(choices, rooms)
+        no_match = eval_df[eval_df["status"]=="NO_MATCH"]
+        if no_match.empty:
+            break
+        moved = False
+        for _, row in no_match.iterrows():
+            p = row["pupil"]
+            liked = set(choices.get(p, []))
+            for r in rooms:
+                if len(r["members"]) < r["capacity"] and (liked & set(r["members"])):
+                    for rr in rooms:
+                        if p in rr["members"]:
+                            rr["members"].remove(p)
+                            break
+                    r["members"].append(p)
+                    moved = True
+                    break
+            if moved:
+                break
+        if not moved:
+            break
+    return rooms
+
+def strict_allocation(choices, capacities):
+    rooms = seed_rooms_by_links(choices, capacities)
+    rooms = optimise_rooms(choices, rooms, max_iters=1000)
+    eval_df = evaluate_status(choices, rooms)
+    # Fail strict if any NO_MATCH or if a room has only 1 person
+    singletons = any(len(r["members"])==1 for r in rooms)
+    if (eval_df["status"]=="NO_MATCH").any() or singletons:
+        return None, eval_df
+    return rooms, eval_df
+
+def fallback_allocation(choices, capacities):
+    rooms = seed_rooms_by_links(choices, capacities)
+    rooms = optimise_rooms(choices, rooms, max_iters=1000)
+    eval_df = evaluate_status(choices, rooms)
+    return rooms, eval_df
 
 def to_first_last(s: str) -> str:
     return f"{s.split(', ')[1]} {s.split(', ')[0]}" if ", " in s else s
