@@ -1,7 +1,7 @@
 
 import pandas as pd
+import random
 from collections import defaultdict
-import copy
 
 NAME_COL = "Select your name. MAKE SURE YOU CLICK YOU!"
 GENDER_COL = "Gender"
@@ -30,102 +30,47 @@ def evaluate_status(choices, rooms):
         mutual = sum(1 for x in mates if (x in lst and p in choices.get(x, [])))
         one_way = sum(1 for x in mates if (x in lst and p not in choices.get(x, [])))
         status = "MUTUAL_OK" if mutual >= 1 else ("ONE_WAY_OK" if one_way >= 1 else "NO_MATCH")
-        rows.append({"pupil": p, "room": i, "status": status})
+        rows.append({"pupil": p, "room": i, "status": status, "mutual": mutual, "one_way": one_way})
     return pd.DataFrame(rows)
 
-def seed_rooms_by_links(choices, capacities):
-    unplaced = set(choices.keys())
-    incoming = defaultdict(set)
-    for a, lst in choices.items():
-        for b in lst:
-            if b in choices:
-                incoming[b].add(a)
-    rooms = [{"capacity": c, "members": []} for c in sorted(capacities, reverse=True)]
-    order = sorted(unplaced, key=lambda p: (len(choices[p]) if choices[p] else 99, -len(incoming[p])))
-
-    for p in order:
-        if p not in unplaced:
-            continue
+def seed_rooms_random(choices, capacities):
+    pupils = list(choices.keys())
+    random.shuffle(pupils)
+    rooms = [{"capacity": c, "members": []} for c in capacities]
+    idx = 0
+    for p in pupils:
         placed = False
-        for r in rooms:
-            if len(r["members"]) >= r["capacity"]:
-                continue
-            members = set(r["members"])
-            if members & set(choices[p]) or members & incoming[p]:
-                r["members"].append(p)
-                unplaced.remove(p)
-                for friend in choices[p]:
-                    if friend in unplaced and len(r["members"]) < r["capacity"]:
-                        r["members"].append(friend)
-                        unplaced.remove(friend)
+        attempts = list(range(len(rooms)))
+        random.shuffle(attempts)
+        for i in attempts:
+            if len(rooms[i]["members"]) < rooms[i]["capacity"]:
+                rooms[i]["members"].append(p)
                 placed = True
                 break
         if not placed:
-            for r in rooms:
-                if len(r["members"]) == 0:
-                    r["members"].append(p)
-                    unplaced.remove(p)
-                    for friend in choices[p]:
-                        if friend in unplaced and len(r["members"]) < r["capacity"]:
-                            r["members"].append(friend)
-                            unplaced.remove(friend)
-                    placed = True
-                    break
-        if not placed:
-            for r in rooms:
-                if len(r["members"]) < r["capacity"]:
-                    r["members"].append(p)
-                    unplaced.remove(p)
-                    break
-    for p in list(unplaced):
-        for r in rooms:
-            if len(r["members"]) < r["capacity"]:
-                r["members"].append(p)
-                unplaced.remove(p)
-                break
+            rooms[idx % len(rooms)]["members"].append(p)
+        idx += 1
     return rooms
 
-def optimise_rooms(choices, rooms, max_iters=500):
-    """Try to reduce NO_MATCH by moving pupils to rooms with chosen friends."""
-    for _ in range(max_iters):
-        eval_df = evaluate_status(choices, rooms)
-        no_match = eval_df[eval_df["status"]=="NO_MATCH"]
-        if no_match.empty:
-            break
-        moved = False
-        for _, row in no_match.iterrows():
-            p = row["pupil"]
-            liked = set(choices.get(p, []))
-            for r in rooms:
-                if len(r["members"]) < r["capacity"] and (liked & set(r["members"])):
-                    for rr in rooms:
-                        if p in rr["members"]:
-                            rr["members"].remove(p)
-                            break
-                    r["members"].append(p)
-                    moved = True
-                    break
-            if moved:
-                break
-        if not moved:
-            break
-    return rooms
-
-def strict_allocation(choices, capacities):
-    rooms = seed_rooms_by_links(choices, capacities)
-    rooms = optimise_rooms(choices, rooms, max_iters=1000)
+def score_allocation(choices, rooms):
     eval_df = evaluate_status(choices, rooms)
-    # Fail strict if any NO_MATCH or if a room has only 1 person
-    singletons = any(len(r["members"])==1 for r in rooms)
-    if (eval_df["status"]=="NO_MATCH").any() or singletons:
-        return None, eval_df
-    return rooms, eval_df
+    mutual = (eval_df["status"]=="MUTUAL_OK").sum()
+    one_way = (eval_df["status"]=="ONE_WAY_OK").sum()
+    no_match = (eval_df["status"]=="NO_MATCH").sum()
+    singletons = sum(1 for r in rooms if len(r["members"])==1)
+    score = (mutual*1000 + one_way*100 - no_match*10000 - singletons*5000)
+    return score, eval_df
 
-def fallback_allocation(choices, capacities):
-    rooms = seed_rooms_by_links(choices, capacities)
-    rooms = optimise_rooms(choices, rooms, max_iters=1000)
-    eval_df = evaluate_status(choices, rooms)
-    return rooms, eval_df
+def optimise_allocation(choices, capacities, n_iter=200):
+    best_score = -1e18
+    best_rooms, best_eval = None, None
+    for _ in range(n_iter):
+        rooms = seed_rooms_random(choices, capacities)
+        score, eval_df = score_allocation(choices, rooms)
+        if score > best_score:
+            if not any(len(r["members"])==1 for r in rooms):
+                best_score, best_rooms, best_eval = score, rooms, eval_df
+    return best_rooms, best_eval
 
 def to_first_last(s: str) -> str:
     return f"{s.split(', ')[1]} {s.split(', ')[0]}" if ", " in s else s

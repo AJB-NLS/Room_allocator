@@ -4,14 +4,14 @@ import pandas as pd
 import streamlit as st
 from allocator import (
     NAME_COL, GENDER_COL, CHOICE_COL,
-    parse_choices, evaluate_status, strict_allocation, fallback_allocation,
-    build_display_table, assign_names_by_capacity, split_capacities_auto
+    parse_choices, optimise_allocation,
+    build_display_table, assign_names_by_capacity, split_capacities_auto, evaluate_status
 )
 
-st.set_page_config(page_title="Room Allocator", layout="wide")
+st.set_page_config(page_title="Room Allocator V3", layout="wide")
 
-st.title("Residential Trip Room Allocator")
-st.caption("Upload pupils + rooms, then click Allocate. Tries strict rules first; falls back with a warning if not possible.")
+st.title("Residential Trip Room Allocator — V3")
+st.caption("Optimised version: no singletons, stronger optimisation, summary included.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -52,38 +52,39 @@ if run:
         boys_caps = [int(x.strip()) for x in boys_manual.split(",") if x.strip()]
         girls_caps = [int(x.strip()) for x in girls_manual.split(",") if x.strip()]
 
-    # Try strict boys/girls allocation
-    boys_rooms, boys_eval = strict_allocation(boys_choices, boys_caps)
-    girls_rooms, girls_eval = strict_allocation(girls_choices, girls_caps)
+    with st.spinner("Optimising allocation... please wait"):
+        boys_rooms, boys_eval = optimise_allocation(boys_choices, boys_caps, n_iter=2000)
+        girls_rooms, girls_eval = optimise_allocation(girls_choices, girls_caps, n_iter=2000)
 
-    warning = False
-    if boys_rooms is None:
-        boys_rooms, boys_eval = fallback_allocation(boys_choices, boys_caps)
-        warning = True
-    if girls_rooms is None:
-        girls_rooms, girls_eval = fallback_allocation(girls_choices, girls_caps)
-        warning = True
+    if boys_rooms is None or girls_rooms is None:
+        st.error("⚠️ Allocation failed: A pupil would be left alone. Please adjust room capacities.")
+        st.stop()
 
     named_rooms = assign_names_by_capacity(all_rooms, boys_rooms, girls_rooms)
     display_df = build_display_table(named_rooms)
 
-    if warning:
-        st.warning("⚠️ It was not possible to satisfy every pupil’s choices. Below is the closest match, minimising pupils without a friend.")
-
     st.subheader("Final Allocation")
     st.dataframe(display_df, use_container_width=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("Boys — Mutual", int((boys_eval["status"]=="MUTUAL_OK").sum()))
-        st.metric("Boys — One-way", int((boys_eval["status"]=="ONE_WAY_OK").sum()))
-        st.metric("Boys — No match", int((boys_eval["status"]=="NO_MATCH").sum()))
-    with c2:
-        st.metric("Girls — Mutual", int((girls_eval["status"]=="MUTUAL_OK").sum()))
-        st.metric("Girls — One-way", int((girls_eval["status"]=="ONE_WAY_OK").sum()))
-        st.metric("Girls — No match", int((girls_eval["status"]=="NO_MATCH").sum()))
+    # Summary section
+    st.subheader("Summary of Optimisation Results")
+    pupils_total = len(pupils_df)
+    singletons_boys = sum(1 for r in boys_rooms if len(r["members"])==1)
+    singletons_girls = sum(1 for r in girls_rooms if len(r["members"])==1)
+    no_match_boys = (boys_eval["status"]=="NO_MATCH").sum()
+    no_match_girls = (girls_eval["status"]=="NO_MATCH").sum()
+    mutual_total = (boys_eval["status"]=="MUTUAL_OK").sum() + (girls_eval["status"]=="MUTUAL_OK").sum()
+    one_way_total = (boys_eval["status"]=="ONE_WAY_OK").sum() + (girls_eval["status"]=="ONE_WAY_OK").sum()
+    no_match_total = no_match_boys + no_match_girls
 
+    st.write(f"**Pupils:** {pupils_total}")
+    st.write(f"**Singletons:** {singletons_boys + singletons_girls}")
+    st.write(f"**Mutual matches:** {mutual_total}")
+    st.write(f"**One-way matches:** {one_way_total}")
+    st.write(f"**No matches:** {no_match_total}")
+
+    # Download file with V3 in the name
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         display_df.to_excel(writer, index=False, sheet_name="Allocation")
-    st.download_button("Download Excel", data=output.getvalue(), file_name="room_allocation_output.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("Download Excel (V3)", data=output.getvalue(), file_name="room_allocation_output_V3.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

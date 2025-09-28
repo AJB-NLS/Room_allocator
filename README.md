@@ -1,8 +1,17 @@
 
-# Room Allocator Website
+# Room Allocator V3
 
-## How teachers should use this site
+Current Version: V3
 
+## What's New
+- Enforces no singletons (no pupil left alone in a room)
+- Stronger optimisation (tries many random restarts)
+- Shows summary of results (mutual, one-way, no match, singletons)
+- Spinner while optimising
+- Warning banner if impossible
+- Excel file exported as `room_allocation_output_V3.xlsx`
+
+## How to Use
 1. Prepare two files:
    - **Pupils Excel** (use the template `pupils_choices_template.xlsx`)
    - **Rooms CSV** (use the template `rooms_list_template.csv`)
@@ -15,10 +24,6 @@
 
 ### Rules applied
 - Boys and girls are placed in separate rooms.
-- Tries to ensure every pupil has at least one of their chosen friends.
-- Tries to avoid single pupils in a room.
-- If it is not possible to satisfy all rules, the app will display a **warning** and show the closest possible allocation.
-
-### Notes
-- The templates in this repository are **empty** — no real pupil data is stored here.
-- Teachers should fill in the templates with pupil names and their room preferences before using the site.
+- Every pupil will be placed with at least one of their chosen friends where possible.
+- No one is left in a room alone.
+- If it is not possible to satisfy all rules, the app will display a warning and ask you to adjust room capacities.
